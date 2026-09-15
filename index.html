@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0f172a">
+<meta name="description" content="Private offline case expense ledger">
+<link rel="manifest" href="manifest.json">
+<title>Case Expense Ledger</title>
+<style>
+*{box-sizing:border-box}body{margin:0;background:#f8fafc;color:#0f172a;font-family:system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+button,input,select{font:inherit}.app{max-width:1000px;margin:auto;padding:18px 14px 32px}
+h1{margin:0;font-size:28px}.muted{color:#64748b;font-size:13px}header{display:flex;justify-content:space-between;gap:12px;align-items:end;margin-bottom:18px}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:16px;padding:16px;margin-bottom:14px;box-shadow:0 2px 8px #00000008}
+.total{font-weight:800;font-size:20px}.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+label{font-size:13px;font-weight:650}input,select{width:100%;margin-top:5px;padding:11px;border:1px solid #cbd5e1;border-radius:9px;background:#fff;outline:none}
+input:focus,select:focus{border-color:#475569;box-shadow:0 0 0 3px #e2e8f0}
+button{border:1px solid #cbd5e1;background:#fff;border-radius:9px;padding:10px 13px;font-weight:650;cursor:pointer}
+button.primary{background:#0f172a;color:#fff;border-color:#0f172a}button.danger{color:#b91c1c;border-color:#fecaca}
+button:disabled{opacity:.45;cursor:not-allowed}.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.stat b{display:block;font-size:22px;margin-top:3px}
+.notice{padding:11px;border-radius:10px;margin-bottom:12px;font-size:13px}.error{background:#fef2f2;color:#991b1b}.ok{background:#ecfdf5;color:#065f46}
+.table-wrap{overflow:auto}table{width:100%;border-collapse:collapse;min-width:720px}th,td{padding:12px 10px;border-bottom:1px solid #f1f5f9;text-align:left;font-size:13px}th{background:#f8fafc}td.amount,th.amount{text-align:right}
+.empty{text-align:center;padding:42px 15px;color:#64748b}
+.install{display:none;background:#0f172a;color:#fff;border:0}.small{font-size:12px}
+@media(max-width:720px){.grid{grid-template-columns:1fr 1fr}.stats{grid-template-columns:1fr 1fr}header{align-items:flex-start;flex-direction:column}.total{font-size:18px}}
+@media(max-width:460px){.grid,.stats{grid-template-columns:1fr}.app{padding:14px 10px}}
+</style>
+</head>
+<body>
+<div class="app">
+<header>
+<div><h1>Case Expense Ledger</h1><div class="muted">Private, offline case-wise expense tracking</div></div>
+<div class="actions" style="margin:0">
+<button id="installBtn" class="install">Install App</button>
+<div class="card" style="margin:0;padding:11px 14px"><div class="muted">Overall Total</div><div class="total" id="overall">₹0.00</div></div>
+</div>
+</header>
+<div id="message"></div>
+
+<section class="card">
+<h2 id="formTitle" style="margin:0 0 3px;font-size:18px">Add Expense</h2><div class="muted">Data is stored locally on this device.</div>
+<form id="expenseForm"><div class="grid" style="margin-top:14px">
+<label>Date<input id="date" type="date" required></label>
+<label>Case Name<input id="caseName" maxlength="200" placeholder="ABC v XYZ" required></label>
+<label>Purpose<input id="purpose" maxlength="200" placeholder="Court fee / Travel" required></label>
+<label>Amount (₹)<input id="amount" type="number" min="0" max="99999999999.99" step="0.01" inputmode="decimal" placeholder="0.00" required></label>
+</div><div class="actions"><button class="primary" id="submitBtn">Add Expense</button><button type="button" id="cancelBtn" style="display:none">Cancel</button></div></form>
+</section>
+
+<section class="stats">
+<div class="card stat"><span class="muted">Visible Expenses</span><b id="count">0</b></div>
+<div class="card stat"><span class="muted">Visible Total</span><b id="visibleTotal">₹0.00</b></div>
+<div class="card stat"><span class="muted">Cases</span><b id="caseCount">0</b></div>
+</section>
+
+<section class="card">
+<div class="grid" style="grid-template-columns:1fr 1fr">
+<label>Case Filter<select id="caseFilter"><option>All</option></select></label>
+<label>Search<input id="search" type="search" placeholder="Case, purpose or date"></label>
+</div>
+<div class="actions">
+<button id="sortBtn">Newest first</button><button id="csvBtn">Export CSV</button><button id="backupBtn">Backup JSON</button>
+<button id="restoreBtn">Restore JSON</button><button class="danger" id="clearBtn">Clear All</button><input id="file" type="file" accept=".json,application/json" hidden>
+</div>
+</section>
+
+<section class="card table-wrap">
+<table><thead><tr><th>Date</th><th>Case</th><th>Purpose</th><th class="amount">Amount</th><th>Actions</th></tr></thead>
+<tbody id="tbody"></tbody><tfoot><tr><th colspan="3" style="text-align:right">Total</th><th class="amount" id="tableTotal">₹0.00</th><th></th></tr></tfoot></table>
+<div id="empty" class="empty" style="display:none">No expenses found.</div>
+</section>
+<div class="muted small" style="text-align:center">Offline-first • No account • No ads • No analytics • No external data service</div>
+</div>
+
+<script>
+const DB="case-expense-ledger-db", STORE="entries"; let entries=[], editingId=null, newest=true, deferredPrompt=null;
+const $=id=>document.getElementById(id), money=n=>"₹"+Number(n||0).toLocaleString("en-IN",{minimumFractionDigits:2,maximumFractionDigits:2});
+const dateText=d=>{const x=new Date(d+"T00:00:00");return isNaN(x)?d:x.toLocaleDateString("en-IN",{day:"2-digit",month:"short",year:"numeric"})};
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#039;"}[c]));
+function msg(t,e=false){$("message").innerHTML=t?`<div class="notice ${e?"error":"ok"}">${esc(t)}</div>`:"";setTimeout(()=>{$("message").innerHTML=""},3000)}
+function makeId(){return crypto.randomUUID?crypto.randomUUID():Date.now()+"-"+Math.random()}
+function openDB(){return new Promise((res,rej)=>{let r=indexedDB.open(DB,1);r.onupgradeneeded=()=>r.result.createObjectStore(STORE,{keyPath:"id"});r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function allDB(){let db=await openDB();return new Promise((res,rej)=>{let t=db.transaction(STORE,"readonly"),r=t.objectStore(STORE).getAll();r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)})}
+async function putDB(x){let db=await openDB();return new Promise((res,rej)=>{let t=db.transaction(STORE,"readwrite");t.objectStore(STORE).put(x);t.oncomplete=res;t.onerror=()=>rej(t.error)})}
+async function deleteDB(id){let db=await openDB();return new Promise((res,rej)=>{let t=db.transaction(STORE,"readwrite");t.objectStore(STORE).delete(id);t.oncomplete=res;t.onerror=()=>rej(t.error)})}
+async function clearDB(){let db=await openDB();return new Promise((res,rej)=>{let t=db.transaction(STORE,"readwrite");t.objectStore(STORE).clear();t.oncomplete=res;t.onerror=()=>rej(t.error)})}
+function cases(){return [...new Set(entries.map(x=>x.caseName).filter(Boolean))].sort((a,b)=>a.localeCompare(b))}
+function filtered(){let f=$("caseFilter").value,q=$("search").value.trim().toLowerCase();return [...entries].filter(x=>(f==="All"||x.caseName===f)&&(!q||x.caseName.toLowerCase().includes(q)||x.purpose.toLowerCase().includes(q)||x.date.includes(q))).sort((a,b)=>{let d=a.date.localeCompare(b.date);return newest?-(d||a.id.localeCompare(b.id)):(d||a.id.localeCompare(b.id))})}
+function renderCases(){let old=$("caseFilter").value||"All";$("caseFilter").innerHTML="<option>All</option>"+cases().map(c=>`<option>${esc(c)}</option>`).join("");$("caseFilter").value=cases().includes(old)?old:"All"}
+function render(){renderCases();let list=filtered(),total=list.reduce((s,x)=>s+x.amount,0),overall=entries.reduce((s,x)=>s+x.amount,0);$("overall").textContent=money(overall);$("count").textContent=list.length;$("visibleTotal").textContent=money(total);$("caseCount").textContent=cases().length;$("tableTotal").textContent=money(total);$("sortBtn").textContent=newest?"Newest first":"Oldest first";$("tbody").innerHTML=list.map(x=>`<tr><td>${dateText(x.date)}</td><td><b>${esc(x.caseName)}</b></td><td>${esc(x.purpose)}</td><td class="amount"><b>${money(x.amount)}</b></td><td><button onclick="editEntry('${esc(x.id)}')">Edit</button> <button class="danger" onclick="deleteEntry('${esc(x.id)}')">Delete</button></td></tr>`).join("");$("empty").style.display=list.length?"none":"block"}
+function resetForm(){editingId=null;$("date").value=new Date().toISOString().slice(0,10);$("caseName").value="";$("purpose").value="";$("amount").value="";$("formTitle").textContent="Add Expense";$("submitBtn").textContent="Add Expense";$("cancelBtn").style.display="none"}
+$("expenseForm").onsubmit=async e=>{e.preventDefault();let date=$("date").value,caseName=$("caseName").value.trim(),purpose=$("purpose").value.trim(),amount=Number($("amount").value);if(!date||!caseName||!purpose||!Number.isFinite(amount)||amount<0){msg("Please enter valid expense details.",true);return}let x={id:editingId||makeId(),date,caseName,purpose,amount:Math.round(amount*100)/100};try{await putDB(x);entries=editingId?entries.map(a=>a.id===editingId?x:a):[x,...entries];let was=!!editingId;resetForm();render();msg(was?"Expense updated.":"Expense added.")}catch(_){msg("Could not save this expense.",true)}};
+window.editEntry=i=>{let x=entries.find(e=>e.id===i);if(!x)return;editingId=i;$("date").value=x.date;$("caseName").value=x.caseName;$("purpose").value=x.purpose;$("amount").value=x.amount;$("formTitle").textContent="Edit Expense";$("submitBtn").textContent="Update Expense";$("cancelBtn").style.display="inline-block";scrollTo({top:0,behavior:"smooth"})};
+window.deleteEntry=async i=>{let x=entries.find(e=>e.id===i);if(!x||!confirm("Delete this expense of "+money(x.amount)+"?"))return;try{await deleteDB(i);entries=entries.filter(e=>e.id!==i);render();msg("Expense deleted.")}catch(_){msg("Could not delete the expense.",true)}};
+$("cancelBtn").onclick=resetForm;$("caseFilter").onchange=render;$("search").oninput=render;$("sortBtn").onclick=()=>{newest=!newest;render()};
+$("clearBtn").onclick=async()=>{if(entries.length&&confirm("Permanently delete every expense on this device?")){await clearDB();entries=[];resetForm();render();msg("Ledger cleared.")}};
+function download(name,data,type){let b=new Blob([data],{type}),u=URL.createObjectURL(b),a=document.createElement("a");a.href=u;a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),1000)}
+$("csvBtn").onclick=()=>{let rows=[["Date","Case Name","Purpose","Amount"],...filtered().map(x=>[x.date,x.caseName,x.purpose,x.amount.toFixed(2)])];let csv=rows.map(r=>r.map(v=>`"${String(v).replace(/"/g,'""')}"`).join(",")).join("\\n");download("case-expenses-"+new Date().toISOString().slice(0,10)+".csv","\\ufeff"+csv,"text/csv");msg("CSV exported.")};
+$("backupBtn").onclick=()=>download("case-expense-backup-"+new Date().toISOString().slice(0,10)+".json",JSON.stringify({version:1,exportedAt:new Date().toISOString(),entries},null,2),"application/json");
+$("restoreBtn").onclick=()=>$("file").click();$("file").onchange=e=>{let f=e.target.files[0];if(!f)return;let r=new FileReader();r.onload=async()=>{try{let p=JSON.parse(r.result),a=Array.isArray(p)?p:p.entries;if(!Array.isArray(a)||a.some(x=>!x.id||typeof x.caseName!=="string"||typeof x.purpose!=="string"||!Number.isFinite(Number(x.amount))||Number(x.amount)<0))throw 0;if(!confirm("Replace the current ledger with "+a.length+" expense(s)?"))return;await clearDB();for(const x of a)await putDB({...x,amount:Math.round(Number(x.amount)*100)/100});entries=a.map(x=>({...x,amount:Math.round(Number(x.amount)*100)/100}));render();msg("Backup restored.")}catch(_){msg("Invalid or damaged backup.",true)}finally{e.target.value=""}};r.readAsText(f)};
+window.addEventListener("beforeinstallprompt",e=>{e.preventDefault();deferredPrompt=e;$("installBtn").style.display="block"});
+$("installBtn").onclick=async()=>{if(!deferredPrompt)return;deferredPrompt.prompt();deferredPrompt=null;$("installBtn").style.display="none"};
+window.addEventListener("appinstalled",()=>msg("App installed on your device."));
+if("serviceWorker" in navigator)navigator.serviceWorker.register("sw.js").catch(()=>{});
+(async()=>{try{entries=await allDB()}catch(e){msg("Local database is unavailable in this browser.",true)}$("date").value=new Date().toISOString().slice(0,10);render()})();
+</script>
+</body>
+</html>
